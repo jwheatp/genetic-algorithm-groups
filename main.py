@@ -1,65 +1,103 @@
 # Example usage
-from genetic import *
 import random
 import pandas as pa
 import sys
 import itertools
+import numpy as np
 
 df = pa.read_csv("data.csv", sep=";")
-df = df[["gender", "age"]]
-df2 = pa.get_dummies(df.reset_index(), columns=["gender"])
+df = df[["gender", "age", "company"]]
+
+WEIGHTS = {
+    "gender": {
+        "weight": 0.6,
+        "condition": "equality_elements"
+    },
+    "age": {
+        "weight": 1
+    },
+    "company": {
+        "weight": 0.4
+    }
+}
+
+df2 = pa.get_dummies(df.reset_index(), columns=["gender", "company"])
 
 data = df2.values.tolist()
 data = data[:100]
 
-nb_iteration = 30
-
+N_ITERATIONS = 30
 N_POPU = len(data)
 N_GROUP = 2000
 GROUP_SIZE = 10
 
-def random_bit():
-    return int(random.getrandbits(1))
+def generate_group(n_popu):
+    """
+    Generate group vector.
+    Size matters here.
+    We have a population of size n_popu.
+    So we'll get a vector of size n_popu with 0s and 1s:
+    - 0 if the individual does not belong to the group
+    - 1 otherwise
+    This insure an individual won't appear several times in the same group.
 
-def generate_individual(n_popu):
-    size = int(n_popu/2)
-    individual1 = [0] * size
-    individual2 = [0] * size
-    n_participants = int(GROUP_SIZE/2)
+    But as we want fixed-size groups, we use a trick:
+    We initialize our group vector by spliting in two parts
+    With two individuals (two 1s) randomly selected in the 1st part, and two in the second part.
+    """
+    part_size = int(n_popu/2) # length of each part of the vector
+    n_part_participants = int(GROUP_SIZE/2) # how many 1s in each part
+    
+    individual = []
+    for part in [0, 1]:
+        part = [0] * part_size
+        bit_positions = random.sample(range(0, part_size), n_part_participants)
+        for pos in bit_positions:
+            part[pos] = 1
 
-    bit_positions_first = random.sample(range(0, size), n_participants)
-    for pos in bit_positions_first:
-        individual1[pos] = 1
-
-    bit_positions_second = random.sample(range(0, size), n_participants)
-    for pos in bit_positions_second:
-        individual2[pos] = 1
-
-    return individual1 + individual2
+        individual += part
+    return individual
 
 def generate_population(n_group, n_popu):
-    return [generate_individual(n_popu) for x in range(n_group)]
+    """
+    Generate a population by generating each group.
+    """
+    return [generate_group(n_popu) for x in range(n_group)]
 
 def score_group(group):
+    """
+    Score a group.
+    A group is a list of 0s and 1s.
+    [0 0 1 0 1 0]
+    Each of these bits says if the nth individual belongs to this group.
+    An individual is identified by its index in the list, the same than in the data list.
+    """
+    # first, get each data vector given the index in the list
+    # ie we get the enriched list of individuals
     individuals = np.array([data[i] for i in range(len(group)) if group[i] == 1])
 
+    # magic happens here
     variance_columns = np.var(individuals, axis=0)
-
     variance_columns = np.delete(variance_columns, 0)
 
-    n_items = individuals.size
-
+    # finally we compute the average variance as the score
     score = np.mean(variance_columns)
 
-    if n_items > GROUP_SIZE:
-        return score
     return score
 
 def score_population(population, avg=True):
+    """
+    Score a population as the mean score of all groups.
+    """
+    # compute the score for each group
+    # we also sort the list, useful for later
     sorted_popu = sorted([(score_group(group),group) for group in population])
 
+    # either we want the average score
     if avg:
         return np.mean([x[0] for x in sorted_popu])
+
+    # or all the scores
     return [x[1] for x in sorted_popu]
 
 def evolve(pop, data, retain=0.2, random_select=0.05, mutate=0.01):
@@ -96,8 +134,8 @@ def evolve(pop, data, retain=0.2, random_select=0.05, mutate=0.01):
 
     children = []
     while len(children) < desired_length:
-        male = choice(parents)
-        female = choice(parents)
+        male = random.choice(parents)
+        female = random.choice(parents)
         if male != female:
             half = int(len(male) / 2)
             child = male[:half] + female[half:]
@@ -109,9 +147,8 @@ def evolve(pop, data, retain=0.2, random_select=0.05, mutate=0.01):
 
 population = generate_population(N_GROUP, N_POPU)
 
-
 score_history = [score_population(population),]
-for i in range(nb_iteration):
+for i in range(N_ITERATIONS):
     print(i)
     population = evolve(population, data)
     score_history.append(score_population(population))
